@@ -1,0 +1,99 @@
+#!/usr/local/bin/ruby
+
+require 'json'
+require 'mechanize'
+
+def accounts
+  if File.exist?("/usr/local/etc/qiwi.conf")
+    z=File.open("/usr/local/etc/qiwi.conf").read
+    z.split.map { |i| i.split(":")} 
+  else
+    []
+  end
+end
+
+def get_info(login, pass, transactions)
+  ret   = {:balances => "", :transactions => []}
+  agent = Mechanize.new{|a| a.ssl_version, a.verify_mode = 'SSLv3' }
+  #Browser imitation
+  ajax_headers = {
+    'X-Requested-With' => 'XMLHttpRequest',
+    'Accept'           => 'application/json, text/javascript, */*; q=0.01',
+    'Content-Type'     => 'application/x-www-form-urlencoded; charset=UTF-8',
+    'User-Agent'       => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/29.0.1547.65 Safari/537.36'
+  }
+  params = {
+    'source'   => 'CONTENT',
+    'login'    => login,
+    'password' => pass
+    }
+  #get token status 7
+  res = JSON.parse(agent.post( 'https://visa.qiwi.com/auth/login.action', params, ajax_headers).body)
+  params["loginToken"] = res["data"]["token"]
+  #get status normal 0
+  res = JSON.parse(agent.post( 'https://visa.qiwi.com/auth/login.action', params, ajax_headers).body)
+  if res["code"]["value"].to_i == 0
+    state = JSON.parse(agent.post( 'https://visa.qiwi.com/person/state.action', {}, ajax_headers).body)
+    ret[:balances]  = state["data"]["balances"]["RUB"]
+    # transactions
+    if transactions
+      list = agent.post('https://visa.qiwi.com/user/report/list.action', {type:3}, ajax_headers).parser.xpath('//div[@class="reports"]/div[@class="reportsLine SUCCESS"]')
+      list.each do |i|
+        income       = Nokogiri::HTML(i.to_html)
+        date         = income.xpath('//span[@class="date"]').inner_html.split(".")
+        time         = income.xpath('//span[@class="time"]').inner_html.split(":")
+        #
+        hash = {}
+        hash[:transaction] = income.xpath('//div[@class="transaction"]').inner_html.to_i
+        hash[:comment    ] = income.xpath('//div[@class="comment"]').inner_html
+        hash[:opnumber   ] = income.xpath('//span[@class="opNumber"]').inner_html
+        hash[:cash       ] = income.xpath('//div[@class="cash"]').inner_html
+        hash[:datetime   ] = Time.new(date[2].to_i,date[1].to_i,date[0].to_i,time[0].to_i,time[1].to_i,time[2].to_i,"+04:00")
+
+        ret[:transactions] << hash
+      end     
+    end
+  else
+    ret[:error] = "error auth #{login}"
+  end
+  return ret
+end
+
+
+###############
+###############
+###############
+if ARGV[0].nil? || ARGV[0]== "h" || ARGV[0]== "help"
+  # help
+  puts "h, help       - this help message"
+  puts "l, list       - list phone no qiwi parsing"
+  puts "b, balance    - list phone balance"
+  puts "t, transactions - list phone and transactions"
+
+elsif ARGV[0]== "l" || ARGV[0]=="list"
+  #list phone
+  accounts.each do |account|
+    puts account[0]
+  end
+
+elsif ARGV[0]== "b" || ARGV[0]=="balance"
+  accounts.each do |account|
+    info = get_info(account[0], account[1], false)
+    puts "#{account[0]} - #{info[:balances]} р."
+  end
+
+elsif ARGV[0]== "t" || ARGV[0]=="transactions"
+  accounts.each do |account|
+    info = get_info(account[0], account[1], true)
+    puts "#{account[0]} - #{info[:balances]} р."
+    puts '________________________'
+    puts 'transaction | opnumber | comment | cash | datetime'
+    info[:transactions].each do |i|
+      puts "#{i[:transaction]} - #{i[:opnumber]} - #{i[:comment]} - #{i[:cash]} - #{i[:datetime]}"
+    end
+    puts ""
+  end
+
+else 
+  puts "Error params! Run script no params."
+end
