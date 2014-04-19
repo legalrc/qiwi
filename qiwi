@@ -8,6 +8,7 @@ def accounts
     z=File.open("/usr/local/etc/qiwi.conf").read
     z.split.map { |i| i.split(":")} 
   else
+    #:)
     []
   end
 end
